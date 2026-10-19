@@ -1,0 +1,59 @@
+name: Build unsigned iOS IPA (for Sideloadly)
+
+# Run manually: GitHub repo -> Actions -> "Build unsigned iOS IPA" -> Run workflow.
+# The result is an UNSIGNED .ipa; Sideloadly signs it with your free Apple ID on your PC.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate native iOS project
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods dependencies
+        run: cd ios && pod install
+
+      # Free Apple IDs cannot provision Push Notifications. The app only uses LOCAL
+      # notifications (rest timer), which do not need this entitlement.
+      - name: Remove push entitlement
+        run: |
+          for f in ios/*/*.entitlements; do
+            /usr/libexec/PlistBuddy -c "Delete :aps-environment" "$f" || true
+          done
+
+      - name: Build Release app without signing
+        run: |
+          WS=$(ls -d ios/*.xcworkspace | head -1)
+          SCHEME=$(basename "$WS" .xcworkspace)
+          xcodebuild \
+            -workspace "$WS" -scheme "$SCHEME" \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
+          zip -qry GymTracker.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GymTracker-ipa
+          path: GymTracker.ipa
+          retention-days: 14
