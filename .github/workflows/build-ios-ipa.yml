@@ -7,10 +7,36 @@ on:
 
 jobs:
   build:
+    # The macos-15 image ships Xcode 26.0.1 to 26.3 (Swift 6.2+) next to its default Xcode 16.4.
     runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      # Expo SDK 57 (ExpoModulesJSI) needs Swift tools 6.2, but the runner defaults to
+      # Xcode 16.4 (Swift 6.1). Pick the newest Xcode 26.x on the image before anything builds.
+      - name: Select Xcode 26 (Swift 6.2+)
+        run: |
+          for v in 26.3 26.2 26.1.1 26.0.1; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$v.app/Contents/Developer"
+              echo "Selected Xcode $v"
+              break
+            fi
+          done
+          echo "--- Installed Xcode apps"
+          ls -d /Applications/Xcode*.app
+          echo "--- xcodebuild -version"
+          xcodebuild -version
+          echo "--- swift --version"
+          swift --version
+          # Fail fast, before a long install, if the toolchain is still older than Swift 6.2
+          SWIFT_VER=$(swift --version 2>&1 | grep -Eo 'Swift version [0-9]+\.[0-9]+' | head -1 | grep -Eo '[0-9]+\.[0-9]+')
+          MAJOR=${SWIFT_VER%%.*}; MINOR=${SWIFT_VER##*.}
+          if [ "$MAJOR" -lt 6 ] || { [ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 2 ]; }; then
+            echo "::error::Swift $SWIFT_VER is older than 6.2 - no Xcode 26.x found on this runner image"
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
